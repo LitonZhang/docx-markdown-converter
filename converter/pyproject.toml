@@ -1,0 +1,25 @@
+[project]
+name = "docx-to-md-converter"
+version = "0.1.0"
+description = "Local DOCX to Markdown converter"
+requires-python = ">=3.10"
+
+authors = [
+  { name = "Docx Md Converter" }
+]
+
+dependencies = []
+
+[project.scripts]
+convert_docx_to_md = "docx_to_md.cli:main_entry"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["docx_to_md*"]

@@ -1,0 +1,24 @@
+{
+  "name": "docx-md-converter",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:dev:win": "powershell -ExecutionPolicy Bypass -File scripts/run-tauri.ps1 dev",
+    "tauri:build:win": "powershell -ExecutionPolicy Bypass -File scripts/run-tauri.ps1 build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0"
+  }
+}
