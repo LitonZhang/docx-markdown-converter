@@ -24,6 +24,29 @@ A local-first converter that supports both `.doc/.docx -> .md` and `.md -> .docx
 - `src-tauri/`: desktop Rust bridge that invokes Python CLI
 - `converter/`: Python conversion engine
 - `tests/`: Python unit tests
+- `release-packages/`: prebuilt Windows installer packages
+
+## Windows Installer Packages
+
+Prebuilt installers are included in this repository under `release-packages/`:
+
+- `release-packages/DOCX Markdown Converter_0.1.0_x64-setup.exe` (recommended for most users)
+- `release-packages/DOCX Markdown Converter_0.1.0_x64_en-US.msi` (better for enterprise/IT deployment)
+
+Direct links:
+
+- `https://github.com/LitonZhang/docx-markdown-converter/tree/main/release-packages`
+
+Install steps:
+
+1. Download one installer from `release-packages`.
+2. Run installer as normal user (or admin if your system policy requires it).
+3. Launch app from Start Menu after installation.
+
+Notes:
+
+- If Windows SmartScreen appears, choose "More info" -> "Run anyway" after verifying source.
+- Prefer `setup.exe` for personal installation; use `msi` when your IT tools require MSI.
 
 ## Run Converter CLI
 
