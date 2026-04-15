@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "converter"))
 
 from convert_md_to_docx import (  # noqa: E402
+    apply_table_settings,
     apply_table_grid_style,
     apply_style_config_to_styles_xml,
     apply_semantic_styles,
@@ -289,6 +290,146 @@ class MdToDocxTests(unittest.TestCase):
             tbl_style = tbl_pr.find(f"{{{W_NS}}}tblStyle")
             self.assertIsNotNone(tbl_style)
             self.assertEqual(tbl_style.get(f"{{{W_NS}}}val"), "TableGrid")
+
+    def test_apply_table_settings_table_preset_sets_tbl_style(self) -> None:
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<w:document xmlns:w="{W_NS}"><w:body>'
+            '<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblBorders><w:top w:val="single"/></w:tblBorders></w:tblPr>'
+            '<w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+            '</w:body></w:document>'
+        )
+        root = ET.fromstring(xml)
+        config_raw = self._style_config_raw()
+        config_raw["tableSettings"] = {
+            "tablePreset": "table",
+            "headerBold": False,
+            "applyTextStyle": False,
+            "textStyle": self._basic_style(),
+        }
+        settings = parse_style_config(config_raw).table_settings
+        apply_table_settings(root, settings)
+
+        tbl_pr = root.find(f".//{{{W_NS}}}tbl/{{{W_NS}}}tblPr")
+        self.assertIsNotNone(tbl_pr)
+        tbl_style = tbl_pr.find(f"{{{W_NS}}}tblStyle")
+        self.assertIsNotNone(tbl_style)
+        self.assertEqual(tbl_style.get(f"{{{W_NS}}}val"), "Table")
+        self.assertIsNone(tbl_pr.find(f"{{{W_NS}}}tblBorders"))
+
+    def test_parse_style_config_missing_table_settings_keeps_legacy_behavior(self) -> None:
+        config = parse_style_config(self._style_config_raw())
+        self.assertEqual(config.table_settings.table_preset, "tableGrid")
+        self.assertFalse(config.table_settings.apply_text_style)
+        self.assertFalse(config.table_settings.header_bold)
+
+    def test_apply_table_settings_three_line_and_text_style(self) -> None:
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<w:document xmlns:w="{W_NS}"><w:body>'
+            '<w:tbl>'
+            '<w:tr><w:tc><w:p><w:r><w:t>H</w:t></w:r></w:p></w:tc></w:tr>'
+            '<w:tr><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>'
+            '</w:tbl>'
+            '</w:body></w:document>'
+        )
+        root = ET.fromstring(xml)
+        config_raw = self._style_config_raw()
+        config_raw["tableSettings"] = {
+            "tablePreset": "threeLine",
+            "headerBold": False,
+            "applyTextStyle": True,
+            "textStyle": {
+                "zhFont": "宋体",
+                "enFont": "Times New Roman",
+                "fontSizePt": 12,
+                "lineSpacingMode": "multiple",
+                "lineSpacingValue": 1.0,
+                "align": "center",
+                "advancedOverride": {
+                    "before": {"mode": "pt", "value": 0},
+                    "after": {"mode": "pt", "value": 0},
+                    "firstLineIndentChars": 0,
+                    "bold": False,
+                    "italic": False,
+                },
+            },
+        }
+        settings = parse_style_config(config_raw).table_settings
+        apply_table_settings(root, settings)
+
+        table = root.find(f".//{{{W_NS}}}tbl")
+        self.assertIsNotNone(table)
+        tbl_pr = table.find(f"{{{W_NS}}}tblPr")
+        self.assertIsNotNone(tbl_pr)
+        tbl_borders = tbl_pr.find(f"{{{W_NS}}}tblBorders")
+        self.assertIsNotNone(tbl_borders)
+        self.assertEqual(
+            tbl_borders.find(f"{{{W_NS}}}top").get(f"{{{W_NS}}}val"),
+            "single",
+        )
+        self.assertEqual(
+            tbl_borders.find(f"{{{W_NS}}}bottom").get(f"{{{W_NS}}}val"),
+            "single",
+        )
+        self.assertEqual(
+            tbl_borders.find(f"{{{W_NS}}}insideV").get(f"{{{W_NS}}}val"),
+            "nil",
+        )
+
+        header_para = root.find(f".//{{{W_NS}}}tr[1]//{{{W_NS}}}p")
+        self.assertIsNotNone(header_para)
+        ppr = header_para.find(f"{{{W_NS}}}pPr")
+        self.assertIsNotNone(ppr)
+        jc = ppr.find(f"{{{W_NS}}}jc")
+        self.assertIsNotNone(jc)
+        self.assertEqual(jc.get(f"{{{W_NS}}}val"), "center")
+        spacing = ppr.find(f"{{{W_NS}}}spacing")
+        self.assertIsNotNone(spacing)
+        self.assertEqual(spacing.get(f"{{{W_NS}}}line"), "240")
+        ind = ppr.find(f"{{{W_NS}}}ind")
+        self.assertIsNotNone(ind)
+        self.assertEqual(ind.get(f"{{{W_NS}}}firstLineChars"), "0")
+
+        header_run = header_para.find(f".//{{{W_NS}}}r")
+        self.assertIsNotNone(header_run)
+        rpr = header_run.find(f"{{{W_NS}}}rPr")
+        self.assertIsNotNone(rpr)
+        fonts = rpr.find(f"{{{W_NS}}}rFonts")
+        self.assertIsNotNone(fonts)
+        self.assertEqual(fonts.get(f"{{{W_NS}}}eastAsia"), "宋体")
+        self.assertEqual(fonts.get(f"{{{W_NS}}}ascii"), "Times New Roman")
+        sz = rpr.find(f"{{{W_NS}}}sz")
+        self.assertIsNotNone(sz)
+        self.assertEqual(sz.get(f"{{{W_NS}}}val"), "24")
+
+    def test_apply_table_settings_header_bold_compat_mode(self) -> None:
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<w:document xmlns:w="{W_NS}"><w:body>'
+            '<w:tbl>'
+            '<w:tr><w:tc><w:p><w:r><w:t>H</w:t></w:r></w:p></w:tc></w:tr>'
+            '<w:tr><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>'
+            '</w:tbl>'
+            '</w:body></w:document>'
+        )
+        root = ET.fromstring(xml)
+        config_raw = self._style_config_raw()
+        config_raw["tableSettings"] = {
+            "tablePreset": "tableGrid",
+            "headerBold": True,
+            "applyTextStyle": False,
+            "textStyle": self._basic_style(),
+        }
+        settings = parse_style_config(config_raw).table_settings
+        apply_table_settings(root, settings)
+
+        header_run = root.find(f".//{{{W_NS}}}tr[1]//{{{W_NS}}}r")
+        body_run = root.find(f".//{{{W_NS}}}tr[2]//{{{W_NS}}}r")
+        self.assertIsNotNone(header_run)
+        self.assertIsNotNone(body_run)
+        self.assertIsNotNone(header_run.find(f".//{{{W_NS}}}b"))
+        self.assertIsNone(body_run.find(f".//{{{W_NS}}}b"))
 
     def test_apply_semantic_styles_clears_conflicting_paragraph_properties(self) -> None:
         xml = (

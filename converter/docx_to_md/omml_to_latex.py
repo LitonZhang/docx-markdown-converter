@@ -65,6 +65,8 @@ def _escape_latex_text(text: str) -> str:
 
 def _latex_delimiter(symbol: str, is_left: bool) -> str:
     mapping = {
+        "": ".",
+        " ": ".",
         "(": "(",
         ")": ")",
         "[": "[",
@@ -165,6 +167,50 @@ class OmmlToLatexConverter:
             right_delim = _latex_delimiter(end, is_left=False)
             return rf"\left{left_delim}{expr}\right{right_delim}"
 
+        if name == "eqArr":
+            rows: list[str] = []
+            for child in list(element):
+                child_name = _local_name(child.tag)
+                if child_name not in {"e", "mr"}:
+                    continue
+                row = self._convert_node(child).strip()
+                if row:
+                    rows.append(row)
+            if not rows:
+                return ""
+            return r"\begin{array}{l}" + r" \\ ".join(rows) + r"\end{array}"
+
+        if name == "mr":
+            cells: list[str] = []
+            for child in list(element):
+                if _local_name(child.tag) != "e":
+                    continue
+                cell = self._convert_node(child).strip()
+                if cell:
+                    cells.append(cell)
+            return " & ".join(cells)
+
+        if name == "m":
+            rows: list[str] = []
+            max_cols = 1
+            for child in list(element):
+                if _local_name(child.tag) != "mr":
+                    continue
+                row = self._convert_node(child).strip()
+                if not row:
+                    continue
+                rows.append(row)
+                max_cols = max(max_cols, row.count("&") + 1)
+            if not rows:
+                return ""
+            return (
+                r"\begin{array}{"
+                + ("l" * max_cols)
+                + "}"
+                + r" \\ ".join(rows)
+                + r"\end{array}"
+            )
+
         if name == "nary":
             nary_pr = self._find(element, "naryPr")
             char = "\u2211"
@@ -223,7 +269,19 @@ class OmmlToLatexConverter:
             expr = self._node_text(self._find(element, "e"))
             return rf"\{accent}{{{expr}}}"
 
-        if name in {"accPr", "naryPr", "begChr", "endChr", "chr", "ctrlPr", "rPr"}:
+        if name in {
+            "accPr",
+            "naryPr",
+            "begChr",
+            "endChr",
+            "chr",
+            "ctrlPr",
+            "rPr",
+            "eqArrPr",
+            "mPr",
+            "mrPr",
+            "mcPr",
+        }:
             return ""
 
         if list(element):

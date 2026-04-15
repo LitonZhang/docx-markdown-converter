@@ -3,6 +3,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import "./style.css";
 
 type Direction = "docxToMd" | "mdToDocx";
+type Locale = "zh" | "en";
 type LineSpacingMode = "multiple" | "fixed";
 type AlignMode = "left" | "center" | "right" | "justify";
 type SpacingMode = "pt" | "lines";
@@ -54,6 +55,16 @@ type MdToDocxStyleBlock = {
   italic?: boolean;
 };
 
+type TablePreset = "threeLine" | "tableGrid" | "table";
+
+type MdToDocxTableSettings = {
+  tablePreset: TablePreset;
+  headerBold: boolean;
+  textStyle: MdToDocxStyleBlock;
+  // Compatibility field for old presets; not exposed in UI.
+  applyTextStyle: boolean;
+};
+
 type MdToDocxStyleConfig = {
   title: MdToDocxStyleBlock;
   abstractZh: MdToDocxStyleBlock;
@@ -64,6 +75,7 @@ type MdToDocxStyleConfig = {
   figureCaption: MdToDocxStyleBlock;
   tableCaption: MdToDocxStyleBlock;
   body: MdToDocxStyleBlock;
+  tableSettings: MdToDocxTableSettings;
   advancedDefaults: StyleAdvancedSettings;
 };
 
@@ -83,6 +95,9 @@ type ConvertMdToDocxResponse = {
 
 const ZH_FONT_OPTIONS = ["宋体", "黑体", "仿宋", "楷体", "微软雅黑"];
 const EN_FONT_OPTIONS = ["Times New Roman", "Arial", "Calibri", "Cambria", "Georgia"];
+let currentLocale: Locale = "zh";
+
+const tr = (zh: string, en: string) => (currentLocale === "zh" ? zh : en);
 
 const DEFAULT_ADVANCED_SETTINGS: StyleAdvancedSettings = {
   before: {
@@ -96,6 +111,30 @@ const DEFAULT_ADVANCED_SETTINGS: StyleAdvancedSettings = {
   firstLineIndentChars: 0,
   bold: false,
   italic: false,
+};
+
+const DEFAULT_TABLE_TEXT_STYLE: MdToDocxStyleBlock = {
+  zhFont: "宋体",
+  enFont: "Times New Roman",
+  fontSizePt: 12,
+  lineSpacingMode: "multiple",
+  lineSpacingValue: 1.0,
+  align: "center",
+  advancedOverride: { ...DEFAULT_ADVANCED_SETTINGS },
+};
+
+const DEFAULT_TABLE_SETTINGS: MdToDocxTableSettings = {
+  tablePreset: "threeLine",
+  headerBold: false,
+  textStyle: { ...DEFAULT_TABLE_TEXT_STYLE },
+  applyTextStyle: true,
+};
+
+const COMPAT_TABLE_SETTINGS: MdToDocxTableSettings = {
+  tablePreset: "tableGrid",
+  headerBold: false,
+  textStyle: { ...DEFAULT_TABLE_TEXT_STYLE },
+  applyTextStyle: false,
 };
 
 const DEFAULT_STYLE_CONFIG: MdToDocxStyleConfig = {
@@ -180,21 +219,22 @@ const DEFAULT_STYLE_CONFIG: MdToDocxStyleConfig = {
     align: "justify",
     advancedOverride: null,
   },
+  tableSettings: { ...DEFAULT_TABLE_SETTINGS },
   advancedDefaults: { ...DEFAULT_ADVANCED_SETTINGS },
 };
 
-type StyleSectionKey = Exclude<keyof MdToDocxStyleConfig, "advancedDefaults">;
+type StyleSectionKey = Exclude<keyof MdToDocxStyleConfig, "advancedDefaults" | "tableSettings">;
 
-const STYLE_SECTIONS: Array<{ key: StyleSectionKey; label: string }> = [
-  { key: "title", label: "论文题目" },
-  { key: "abstractZh", label: "中文摘要" },
-  { key: "abstractEn", label: "英文摘要" },
-  { key: "heading1", label: "一级标题" },
-  { key: "heading2", label: "二级标题" },
-  { key: "heading3", label: "三级标题" },
-  { key: "figureCaption", label: "图标题" },
-  { key: "tableCaption", label: "表标题" },
-  { key: "body", label: "正文" },
+const STYLE_SECTIONS: StyleSectionKey[] = [
+  "title",
+  "abstractZh",
+  "abstractEn",
+  "heading1",
+  "heading2",
+  "heading3",
+  "figureCaption",
+  "tableCaption",
+  "body",
 ];
 const COLLAPSIBLE_STYLE_KEYS: StyleSectionKey[] = [
   "title",
@@ -207,6 +247,43 @@ const COLLAPSIBLE_STYLE_KEYS: StyleSectionKey[] = [
   "tableCaption",
   "body",
 ];
+
+const getStyleSectionLabel = (key: StyleSectionKey) => {
+  switch (key) {
+    case "title":
+      return tr("论文题目", "Paper Title");
+    case "abstractZh":
+      return tr("中文摘要", "Chinese Abstract");
+    case "abstractEn":
+      return tr("英文摘要", "English Abstract");
+    case "heading1":
+      return tr("一级标题", "Heading 1");
+    case "heading2":
+      return tr("二级标题", "Heading 2");
+    case "heading3":
+      return tr("三级标题", "Heading 3");
+    case "figureCaption":
+      return tr("图标题", "Figure Caption");
+    case "tableCaption":
+      return tr("表标题", "Table Caption");
+    case "body":
+      return tr("正文", "Body Text");
+    default:
+      return key;
+  }
+};
+
+const getTablePresetLabel = (preset: TablePreset) => {
+  switch (preset) {
+    case "threeLine":
+      return tr("三线表", "Three-Line");
+    case "table":
+      return tr("基础表", "Basic Table");
+    case "tableGrid":
+    default:
+      return tr("网格表", "Grid Table");
+  }
+};
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -233,50 +310,50 @@ const renderStyleCard = (
   const fields = `
     <article class="style-card" data-style-key="${key}">
     <div class="style-grid-fields">
-      <label>中文字体
+      <label>${tr("中文字体", "Chinese Font")}
         <select id="${styleInputId(key, "zhFont")}">
           ${renderSelectOptions(ZH_FONT_OPTIONS, block.zhFont)}
         </select>
       </label>
-      <label>英文字体
+      <label>${tr("英文字体", "English Font")}
         <select id="${styleInputId(key, "enFont")}">
           ${renderSelectOptions(EN_FONT_OPTIONS, block.enFont)}
         </select>
       </label>
-      <label>字号(pt)<input id="${styleInputId(key, "fontSizePt")}" type="number" min="1" step="0.5" value="${block.fontSizePt}" /></label>
-      <label>行距模式
+      <label>${tr("字号(pt)", "Font Size (pt)")}<input id="${styleInputId(key, "fontSizePt")}" type="number" min="1" step="0.5" value="${block.fontSizePt}" /></label>
+      <label>${tr("行距模式", "Line Spacing Mode")}
         <select id="${styleInputId(key, "lineSpacingMode")}">
-          <option value="multiple" ${block.lineSpacingMode === "multiple" ? "selected" : ""}>倍数</option>
-          <option value="fixed" ${block.lineSpacingMode === "fixed" ? "selected" : ""}>固定值(pt)</option>
+          <option value="multiple" ${block.lineSpacingMode === "multiple" ? "selected" : ""}>${tr("倍数", "Multiple")}</option>
+          <option value="fixed" ${block.lineSpacingMode === "fixed" ? "selected" : ""}>${tr("固定值(pt)", "Fixed (pt)")}</option>
         </select>
       </label>
-      <label>行距值<input id="${styleInputId(key, "lineSpacingValue")}" type="number" min="0.1" step="0.1" value="${block.lineSpacingValue}" /></label>
-      <label>对齐
+      <label>${tr("行距值", "Line Spacing Value")}<input id="${styleInputId(key, "lineSpacingValue")}" type="number" min="0.1" step="0.1" value="${block.lineSpacingValue}" /></label>
+      <label>${tr("对齐", "Alignment")}
         <select id="${styleInputId(key, "align")}">
-          <option value="left" ${block.align === "left" ? "selected" : ""}>左对齐</option>
-          <option value="center" ${block.align === "center" ? "selected" : ""}>居中</option>
-          <option value="right" ${block.align === "right" ? "selected" : ""}>右对齐</option>
-          <option value="justify" ${block.align === "justify" ? "selected" : ""}>两端对齐</option>
+          <option value="left" ${block.align === "left" ? "selected" : ""}>${tr("左对齐", "Left")}</option>
+          <option value="center" ${block.align === "center" ? "selected" : ""}>${tr("居中", "Center")}</option>
+          <option value="right" ${block.align === "right" ? "selected" : ""}>${tr("右对齐", "Right")}</option>
+          <option value="justify" ${block.align === "justify" ? "selected" : ""}>${tr("两端对齐", "Justify")}</option>
         </select>
       </label>
-      <label>段前模式
+      <label>${tr("段前模式", "Before Paragraph Mode")}
         <select id="${styleInputId(key, "beforeMode")}">
-          <option value="pt" ${advancedValues.before.mode === "pt" ? "selected" : ""}>固定值(pt)</option>
-          <option value="lines" ${advancedValues.before.mode === "lines" ? "selected" : ""}>行</option>
+          <option value="pt" ${advancedValues.before.mode === "pt" ? "selected" : ""}>${tr("固定值(pt)", "Fixed (pt)")}</option>
+          <option value="lines" ${advancedValues.before.mode === "lines" ? "selected" : ""}>${tr("行", "Lines")}</option>
         </select>
       </label>
-      <label>段前值<input id="${styleInputId(key, "beforeValue")}" type="number" min="0" step="0.1" value="${advancedValues.before.value}" /></label>
-      <label>段后模式
+      <label>${tr("段前值", "Before Paragraph Value")}<input id="${styleInputId(key, "beforeValue")}" type="number" min="0" step="0.1" value="${advancedValues.before.value}" /></label>
+      <label>${tr("段后模式", "After Paragraph Mode")}
         <select id="${styleInputId(key, "afterMode")}">
-          <option value="pt" ${advancedValues.after.mode === "pt" ? "selected" : ""}>固定值(pt)</option>
-          <option value="lines" ${advancedValues.after.mode === "lines" ? "selected" : ""}>行</option>
+          <option value="pt" ${advancedValues.after.mode === "pt" ? "selected" : ""}>${tr("固定值(pt)", "Fixed (pt)")}</option>
+          <option value="lines" ${advancedValues.after.mode === "lines" ? "selected" : ""}>${tr("行", "Lines")}</option>
         </select>
       </label>
-      <label>段后值<input id="${styleInputId(key, "afterValue")}" type="number" min="0" step="0.1" value="${advancedValues.after.value}" /></label>
-      <label>首行缩进(字符)<input id="${styleInputId(key, "firstLineIndentChars")}" type="number" min="0" step="0.5" value="${advancedValues.firstLineIndentChars}" /></label>
+      <label>${tr("段后值", "After Paragraph Value")}<input id="${styleInputId(key, "afterValue")}" type="number" min="0" step="0.1" value="${advancedValues.after.value}" /></label>
+      <label>${tr("首行缩进(字符)", "First Line Indent (chars)")}<input id="${styleInputId(key, "firstLineIndentChars")}" type="number" min="0" step="0.5" value="${advancedValues.firstLineIndentChars}" /></label>
       <div class="style-inline-checks">
-        <label class="compact-check"><input id="${styleInputId(key, "bold")}" type="checkbox" ${advancedValues.bold ? "checked" : ""} />加粗</label>
-        <label class="compact-check"><input id="${styleInputId(key, "italic")}" type="checkbox" ${advancedValues.italic ? "checked" : ""} />斜体</label>
+        <label class="compact-check"><input id="${styleInputId(key, "bold")}" type="checkbox" ${advancedValues.bold ? "checked" : ""} />${tr("加粗", "Bold")}</label>
+        <label class="compact-check"><input id="${styleInputId(key, "italic")}" type="checkbox" ${advancedValues.italic ? "checked" : ""} />${tr("斜体", "Italic")}</label>
       </div>
     </div>
   </article>
@@ -300,41 +377,121 @@ const renderStyleCard = (
 };
 
 const renderStyleCards = (config: MdToDocxStyleConfig) =>
-  STYLE_SECTIONS.map((item) => renderStyleCard(item.key, item.label, config[item.key])).join("\n");
+  STYLE_SECTIONS.map((key) => renderStyleCard(key, getStyleSectionLabel(key), config[key])).join("\n");
+
+const renderTableSettingsCard = (settings: MdToDocxTableSettings) => {
+  const textStyle = settings.textStyle.advancedOverride
+    ? settings.textStyle
+    : { ...settings.textStyle, advancedOverride: DEFAULT_ADVANCED_SETTINGS };
+  const advancedValues = textStyle.advancedOverride ?? DEFAULT_ADVANCED_SETTINGS;
+
+  return `
+  <details class="style-section" data-style-key="table-settings">
+    <summary>${tr("表格样式", "Table Style")}</summary>
+    <article class="style-card" data-style-key="table-settings-body">
+      <div class="style-grid-fields">
+        <label>${tr("表格预设", "Table Preset")}
+          <select id="table-tablePreset">
+            ${(["threeLine", "tableGrid", "table"] as TablePreset[])
+              .map((preset) => `<option value="${preset}" ${settings.tablePreset === preset ? "selected" : ""}>${getTablePresetLabel(preset)}</option>`)
+              .join("")}
+          </select>
+        </label>
+        <div class="style-inline-checks">
+          <label class="compact-check"><input id="table-headerBold" type="checkbox" ${settings.headerBold ? "checked" : ""} />${tr("首行加粗", "Header Bold")}</label>
+        </div>
+        <label>${tr("中文字体", "Chinese Font")}
+          <select id="table-zhFont">
+            ${renderSelectOptions(ZH_FONT_OPTIONS, textStyle.zhFont)}
+          </select>
+        </label>
+        <label>${tr("英文字体", "English Font")}
+          <select id="table-enFont">
+            ${renderSelectOptions(EN_FONT_OPTIONS, textStyle.enFont)}
+          </select>
+        </label>
+        <label>${tr("字号(pt)", "Font Size (pt)")}<input id="table-fontSizePt" type="number" min="1" step="0.5" value="${textStyle.fontSizePt}" /></label>
+        <label>${tr("行距模式", "Line Spacing Mode")}
+          <select id="table-lineSpacingMode">
+            <option value="multiple" ${textStyle.lineSpacingMode === "multiple" ? "selected" : ""}>${tr("倍数", "Multiple")}</option>
+            <option value="fixed" ${textStyle.lineSpacingMode === "fixed" ? "selected" : ""}>${tr("固定值(pt)", "Fixed (pt)")}</option>
+          </select>
+        </label>
+        <label>${tr("行距值", "Line Spacing Value")}<input id="table-lineSpacingValue" type="number" min="0.1" step="0.1" value="${textStyle.lineSpacingValue}" /></label>
+        <label>${tr("对齐", "Alignment")}
+          <select id="table-align">
+            <option value="left" ${textStyle.align === "left" ? "selected" : ""}>${tr("左对齐", "Left")}</option>
+            <option value="center" ${textStyle.align === "center" ? "selected" : ""}>${tr("居中", "Center")}</option>
+            <option value="right" ${textStyle.align === "right" ? "selected" : ""}>${tr("右对齐", "Right")}</option>
+            <option value="justify" ${textStyle.align === "justify" ? "selected" : ""}>${tr("两端对齐", "Justify")}</option>
+          </select>
+        </label>
+        <label>${tr("段前模式", "Before Paragraph Mode")}
+          <select id="table-beforeMode">
+            <option value="pt" ${advancedValues.before.mode === "pt" ? "selected" : ""}>${tr("固定值(pt)", "Fixed (pt)")}</option>
+            <option value="lines" ${advancedValues.before.mode === "lines" ? "selected" : ""}>${tr("行", "Lines")}</option>
+          </select>
+        </label>
+        <label>${tr("段前值", "Before Paragraph Value")}<input id="table-beforeValue" type="number" min="0" step="0.1" value="${advancedValues.before.value}" /></label>
+        <label>${tr("段后模式", "After Paragraph Mode")}
+          <select id="table-afterMode">
+            <option value="pt" ${advancedValues.after.mode === "pt" ? "selected" : ""}>${tr("固定值(pt)", "Fixed (pt)")}</option>
+            <option value="lines" ${advancedValues.after.mode === "lines" ? "selected" : ""}>${tr("行", "Lines")}</option>
+          </select>
+        </label>
+        <label>${tr("段后值", "After Paragraph Value")}<input id="table-afterValue" type="number" min="0" step="0.1" value="${advancedValues.after.value}" /></label>
+        <label>${tr("首行缩进(字符)", "First Line Indent (chars)")}<input id="table-firstLineIndentChars" type="number" min="0" step="0.5" value="${advancedValues.firstLineIndentChars}" /></label>
+        <div class="style-inline-checks">
+          <label class="compact-check"><input id="table-bold" type="checkbox" ${advancedValues.bold ? "checked" : ""} />${tr("加粗", "Bold")}</label>
+          <label class="compact-check"><input id="table-italic" type="checkbox" ${advancedValues.italic ? "checked" : ""} />${tr("斜体", "Italic")}</label>
+        </div>
+      </div>
+    </article>
+  </details>
+`;
+};
+
+const renderStylePanelCards = (config: MdToDocxStyleConfig) =>
+  `${renderStyleCards(config)}\n${renderTableSettingsCard(config.tableSettings)}`;
 
 app.innerHTML = `
   <main class="app-shell">
     <header class="hero">
-      <h1>文档格式转换工具</h1>
-      <p>支持 DOC/DOCX 与 Markdown 双向转换，并可自定义论文样式导出 DOCX。</p>
+      <div class="hero-head">
+        <div>
+          <h1 id="heroTitle">文档格式转换工具</h1>
+          <p id="heroDesc">支持 DOC/DOCX 与 Markdown 双向转换，并可自定义论文样式导出 DOCX。</p>
+        </div>
+        <button id="langToggle" type="button" class="btn btn-soft lang-toggle">中文 / EN</button>
+      </div>
     </header>
 
     <section class="content-grid">
       <article class="panel controls-panel">
         <div class="panel-head">
-          <h2>转换设置</h2>
-          <p>先选择转换方向，再配置输入输出和参数。</p>
+          <h2 id="controlsTitle">转换设置</h2>
+          <p id="controlsDesc">先选择转换方向，再配置输入输出和参数。</p>
         </div>
 
-        <div class="mode-switch" role="radiogroup" aria-label="转换方向">
+        <div id="directionGroup" class="mode-switch" role="radiogroup" aria-label="转换方向">
           <label class="mode-pill">
             <input type="radio" name="direction" value="docxToMd" checked />
-            <span>DOC/DOCX → MD</span>
+            <span id="docxToMdLabel">DOC/DOCX → MD</span>
           </label>
           <label class="mode-pill">
             <input type="radio" name="direction" value="mdToDocx" />
-            <span>MD → DOCX</span>
+            <span id="mdToDocxLabel">MD → DOCX</span>
           </label>
         </div>
 
         <section id="docxModePanel" class="mode-panel">
-          <label class="field-label" for="inputPath">输入文件</label>
+          <label id="docInputLabel" class="field-label" for="inputPath">输入文件</label>
           <div class="field-row">
             <input id="inputPath" type="text" placeholder="选择 .doc 或 .docx 文件" readonly />
             <button id="pickInput" class="btn">选择</button>
           </div>
 
-          <label class="field-label" for="outputPath">输出 Markdown</label>
+          <label id="docOutputLabel" class="field-label" for="outputPath">输出 Markdown</label>
           <div class="field-row">
             <input id="outputPath" type="text" placeholder="默认与源文件同目录" readonly />
             <button id="pickOutput" class="btn">另存为</button>
@@ -342,12 +499,12 @@ app.innerHTML = `
 
           <label class="checkbox-row">
             <input id="extractImages" type="checkbox" />
-            <span>导出图片（自动创建源目录下图片文件夹）</span>
+            <span id="extractImagesText">导出图片（自动创建源目录下图片文件夹）</span>
           </label>
 
           <label class="checkbox-row">
             <input id="splitSections" type="checkbox" />
-            <span>按章节拆分为多个 md 文件</span>
+            <span id="splitSectionsText">按章节拆分为多个 md 文件</span>
           </label>
 
           <div class="actions-row">
@@ -357,13 +514,13 @@ app.innerHTML = `
         </section>
 
         <section id="mdModePanel" class="mode-panel hidden">
-          <label class="field-label" for="mdInputPath">输入 Markdown</label>
+          <label id="mdInputLabel" class="field-label" for="mdInputPath">输入 Markdown</label>
           <div class="field-row">
             <input id="mdInputPath" type="text" placeholder="选择 .md 文件" readonly />
             <button id="pickMdInput" class="btn">选择</button>
           </div>
 
-          <label class="field-label" for="docxOutputPath">输出 DOCX</label>
+          <label id="docxOutputLabel" class="field-label" for="docxOutputPath">输出 DOCX</label>
           <div class="field-row">
             <input id="docxOutputPath" type="text" placeholder="默认与源文件同目录" readonly />
             <button id="pickDocxOutput" class="btn">另存为</button>
@@ -379,7 +536,7 @@ app.innerHTML = `
           </div>
 
           <div id="stylePanel" class="style-panel hidden">
-            <div class="style-cards">${renderStyleCards(DEFAULT_STYLE_CONFIG)}</div>
+            <div id="styleCards" class="style-cards">${renderStylePanelCards(DEFAULT_STYLE_CONFIG)}</div>
           </div>
 
           <div class="actions-row actions-row-md">
@@ -430,22 +587,111 @@ const resetStylePresetButton = document.querySelector<HTMLButtonElement>("#reset
 const loadStylePresetButton = document.querySelector<HTMLButtonElement>("#loadStylePreset")!;
 const saveStylePresetButton = document.querySelector<HTMLButtonElement>("#saveStylePreset")!;
 const toggleStylePanelButton = document.querySelector<HTMLButtonElement>("#toggleStylePanel")!;
+const langToggleButton = document.querySelector<HTMLButtonElement>("#langToggle")!;
+const styleCardsEl = document.querySelector<HTMLDivElement>("#styleCards")!;
 const stylePanelEl = document.querySelector<HTMLElement>("#stylePanel")!;
+const directionGroupEl = document.querySelector<HTMLElement>("#directionGroup")!;
 
 const directionRadios = Array.from(
   document.querySelectorAll<HTMLInputElement>('input[name="direction"]'),
 );
 
 let currentDirection: Direction = "docxToMd";
+let tableApplyTextStyle = DEFAULT_STYLE_CONFIG.tableSettings.applyTextStyle;
 
 const setStatus = (message: string, state: "idle" | "info" | "success" | "error" = "info") => {
   statusEl.textContent = message;
   statusEl.dataset.state = state;
 };
 
+const getIdleText = () => tr("等待操作", "Waiting for action");
+const getNoContentText = () => tr("暂无内容", "No content yet");
+const getPreviewTitle = (direction: Direction) =>
+  direction === "docxToMd" ? tr("Markdown 预览", "Markdown Preview") : tr("DOCX 导出日志", "DOCX Export Logs");
+const getPreviewDescription = (direction: Direction) =>
+  direction === "docxToMd"
+    ? tr("显示当前转换后的 Markdown 文本。", "Show converted Markdown content.")
+    : tr("显示导出结果与日志。", "Show export results and logs.");
+
 const setStylePanelExpanded = (expanded: boolean) => {
   stylePanelEl.classList.toggle("hidden", !expanded);
-  toggleStylePanelButton.textContent = expanded ? "收起样式设置 ▲" : "展开样式设置 ▼";
+  toggleStylePanelButton.textContent = expanded
+    ? tr("样式 ▲", "Style ▲")
+    : tr("样式 ▼", "Style ▼");
+};
+
+const rerenderStyleCards = () => {
+  let preservedConfig: MdToDocxStyleConfig = DEFAULT_STYLE_CONFIG;
+  try {
+    preservedConfig = readStyleConfigFromForm();
+  } catch {
+    preservedConfig = DEFAULT_STYLE_CONFIG;
+  }
+
+  styleCardsEl.innerHTML = renderStylePanelCards(preservedConfig);
+  applyStyleConfigToForm(preservedConfig);
+};
+
+const applyLocaleToUI = () => {
+  const setText = (selector: string, text: string) => {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) {
+      el.textContent = text;
+    }
+  };
+
+  setText("#heroTitle", tr("文档格式转换工具", "Document Format Converter"));
+  setText(
+    "#heroDesc",
+    tr(
+      "支持 DOC/DOCX 与 Markdown 双向转换，并可自定义论文样式导出 DOCX。",
+      "Supports DOC/DOCX and Markdown conversion in both directions, with customizable paper style export to DOCX.",
+    ),
+  );
+
+  setText("#controlsTitle", tr("转换设置", "Conversion Settings"));
+  setText("#controlsDesc", tr("先选择转换方向，再配置输入输出和参数。", "Pick a direction, then configure input/output and options."));
+  directionGroupEl.setAttribute("aria-label", tr("转换方向", "Conversion Direction"));
+
+  setText("#docxToMdLabel", "DOC/DOCX → MD");
+  setText("#mdToDocxLabel", "MD → DOCX");
+
+  setText("#docInputLabel", tr("输入文件", "Input File"));
+  setText("#docOutputLabel", tr("输出 Markdown", "Output Markdown"));
+  setText("#extractImagesText", tr("导出图片（自动创建源目录下图片文件夹）", "Export images (auto-create image folder beside source file)"));
+  setText("#splitSectionsText", tr("按章节拆分为多个 md 文件", "Split output into multiple Markdown files by sections"));
+
+  inputPathEl.placeholder = tr("选择 .doc 或 .docx 文件", "Choose a .doc or .docx file");
+  outputPathEl.placeholder = tr("默认与源文件同目录", "Default: same folder as source");
+
+  pickInputButton.textContent = tr("选择", "Choose");
+  pickOutputButton.textContent = tr("另存为", "Save As");
+  openDocOutputDirButton.textContent = tr("打开输出文件夹", "Open Output Folder");
+  runButton.textContent = tr("转换为MD", "Convert to MD");
+
+  setText("#mdInputLabel", tr("输入 Markdown", "Input Markdown"));
+  setText("#docxOutputLabel", tr("输出 DOCX", "Output DOCX"));
+  mdInputPathEl.placeholder = tr("选择 .md 文件", "Choose a .md file");
+  docxOutputPathEl.placeholder = tr("默认与源文件同目录", "Default: same folder as source");
+
+  pickMdInputButton.textContent = tr("选择", "Choose");
+  pickDocxOutputButton.textContent = tr("另存为", "Save As");
+  openDocxOutputDirButton.textContent = tr("打开输出文件夹", "Open Output Folder");
+  runMdToDocxButton.textContent = tr("转换为Docx", "Convert to DOCX");
+  resetStylePresetButton.textContent = tr("恢复默认样式", "Reset Style");
+  loadStylePresetButton.textContent = tr("加载样式预设", "Load Preset");
+  saveStylePresetButton.textContent = tr("保存样式预设", "Save Preset");
+
+  langToggleButton.textContent = currentLocale === "zh" ? "中文 / EN" : "EN / 中文";
+
+  setText("#previewTitle", getPreviewTitle(currentDirection));
+  setText("#previewDesc", getPreviewDescription(currentDirection));
+  if (outputViewEl.textContent === "暂无内容" || outputViewEl.textContent === "No content yet") {
+    outputViewEl.textContent = getNoContentText();
+  }
+
+  rerenderStyleCards();
+  setStylePanelExpanded(!stylePanelEl.classList.contains("hidden"));
 };
 
 const splitPath = (fullPath: string) => {
@@ -493,30 +739,28 @@ const switchDirection = (direction: Direction) => {
   docxModePanel.classList.toggle("hidden", !isDocToMd);
   mdModePanel.classList.toggle("hidden", isDocToMd);
 
-  previewTitleEl.textContent = isDocToMd ? "Markdown 预览" : "DOCX 导出日志";
-  previewDescEl.textContent = isDocToMd
-    ? "显示当前转换后的 Markdown 文本。"
-    : "显示导出结果与日志。";
-  outputViewEl.textContent = "暂无内容";
-  setStatus("等待操作", "idle");
+  previewTitleEl.textContent = getPreviewTitle(direction);
+  previewDescEl.textContent = getPreviewDescription(direction);
+  outputViewEl.textContent = getNoContentText();
+  setStatus(getIdleText(), "idle");
   if (!isDocToMd) {
     setStylePanelExpanded(false);
   }
 };
 
-const openFolderForPath = async (path: string, successLabel = "已打开输出文件夹") => {
+const openFolderForPath = async (path: string, successLabel?: string) => {
   if (!path) {
-    setStatus("请先设置输出路径", "error");
+    setStatus(tr("请先设置输出路径", "Please set output path first"), "error");
     return;
   }
   try {
     await invoke("open_folder_for_path", {
       request: { path },
     });
-    setStatus(successLabel, "success");
+    setStatus(successLabel ?? tr("已打开输出文件夹", "Output folder opened"), "success");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    setStatus(`打开失败：${message}`, "error");
+    setStatus(`${tr("打开失败：", "Open failed: ")}${message}`, "error");
   }
 };
 
@@ -531,7 +775,7 @@ const requireElement = <T extends HTMLElement>(selector: string) => {
 const parsePositiveNumber = (rawValue: string, fieldLabel: string) => {
   const value = Number.parseFloat(rawValue);
   if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${fieldLabel} 必须是正数`);
+    throw new Error(`${fieldLabel}${tr(" 必须是正数", " must be a positive number")}`);
   }
   return value;
 };
@@ -539,7 +783,7 @@ const parsePositiveNumber = (rawValue: string, fieldLabel: string) => {
 const parseNonNegativeNumber = (rawValue: string, fieldLabel: string) => {
   const value = Number.parseFloat(rawValue);
   if (!Number.isFinite(value) || value < 0) {
-    throw new Error(`${fieldLabel} 不能为负数`);
+    throw new Error(`${fieldLabel}${tr(" 不能为负数", " cannot be negative")}`);
   }
   return value;
 };
@@ -556,6 +800,12 @@ const ensureSelectHasValue = (select: HTMLSelectElement, value: string) => {
 };
 
 const parseSpacingMode = (value: unknown): SpacingMode => (value === "lines" ? "lines" : "pt");
+const parseTablePreset = (value: unknown): TablePreset => {
+  if (value === "threeLine" || value === "table" || value === "tableGrid") {
+    return value;
+  }
+  return "tableGrid";
+};
 
 const normalizeAdvancedSettings = (
   raw: unknown,
@@ -595,6 +845,44 @@ const normalizeAdvancedSettings = (
   };
 };
 
+const normalizeStyleBlock = (
+  raw: unknown,
+  fallback: MdToDocxStyleBlock,
+  defaults: StyleAdvancedSettings,
+): MdToDocxStyleBlock => {
+  const withCompat = (raw ?? fallback) as MdToDocxStyleBlock;
+
+  let advancedOverride = normalizeAdvancedSettings(withCompat.advancedOverride, defaults);
+  if (
+    (!withCompat.advancedOverride || typeof withCompat.advancedOverride !== "object") &&
+    (typeof withCompat.bold === "boolean" || typeof withCompat.italic === "boolean")
+  ) {
+    advancedOverride = normalizeAdvancedSettings(
+      { bold: withCompat.bold, italic: withCompat.italic },
+      defaults,
+    );
+  }
+
+  return {
+    zhFont: withCompat.zhFont ?? fallback.zhFont,
+    enFont: withCompat.enFont ?? fallback.enFont,
+    fontSizePt: Number.isFinite(Number(withCompat.fontSizePt))
+      ? Number(withCompat.fontSizePt)
+      : fallback.fontSizePt,
+    lineSpacingMode: withCompat.lineSpacingMode === "fixed" ? "fixed" : "multiple",
+    lineSpacingValue: Number.isFinite(Number(withCompat.lineSpacingValue))
+      ? Number(withCompat.lineSpacingValue)
+      : fallback.lineSpacingValue,
+    align:
+      withCompat.align === "center" ||
+      withCompat.align === "right" ||
+      withCompat.align === "justify"
+        ? withCompat.align
+        : "left",
+    advancedOverride,
+  };
+};
+
 const normalizeStyleConfig = (raw: MdToDocxStyleConfig): MdToDocxStyleConfig => {
   const base = DEFAULT_STYLE_CONFIG;
   const defaults = normalizeAdvancedSettings(
@@ -602,40 +890,32 @@ const normalizeStyleConfig = (raw: MdToDocxStyleConfig): MdToDocxStyleConfig => 
     base.advancedDefaults,
   );
 
-  const normalizedBlock = (key: StyleSectionKey): MdToDocxStyleBlock => {
-    const source = (raw as unknown as Partial<MdToDocxStyleConfig>)[key] ?? base[key];
-    const withCompat = source as MdToDocxStyleBlock;
+  const normalizedBlock = (key: StyleSectionKey): MdToDocxStyleBlock =>
+    normalizeStyleBlock(
+      (raw as unknown as Partial<MdToDocxStyleConfig>)[key],
+      base[key],
+      defaults,
+    );
 
-    let advancedOverride = normalizeAdvancedSettings(withCompat.advancedOverride, defaults);
-    if (
-      (!withCompat.advancedOverride || typeof withCompat.advancedOverride !== "object") &&
-      (typeof withCompat.bold === "boolean" || typeof withCompat.italic === "boolean")
-    ) {
-      advancedOverride = normalizeAdvancedSettings(
-        { bold: withCompat.bold, italic: withCompat.italic },
-        defaults,
-      );
-    }
-
-    return {
-      zhFont: withCompat.zhFont ?? base[key].zhFont,
-      enFont: withCompat.enFont ?? base[key].enFont,
-      fontSizePt: Number.isFinite(Number(withCompat.fontSizePt))
-        ? Number(withCompat.fontSizePt)
-        : base[key].fontSizePt,
-      lineSpacingMode: withCompat.lineSpacingMode === "fixed" ? "fixed" : "multiple",
-      lineSpacingValue: Number.isFinite(Number(withCompat.lineSpacingValue))
-        ? Number(withCompat.lineSpacingValue)
-        : base[key].lineSpacingValue,
-      align:
-        withCompat.align === "center" ||
-        withCompat.align === "right" ||
-        withCompat.align === "justify"
-          ? withCompat.align
-          : "left",
-      advancedOverride,
+  const rawTableSettings = (raw as unknown as { tableSettings?: unknown }).tableSettings;
+  let normalizedTableSettings = { ...COMPAT_TABLE_SETTINGS };
+  if (rawTableSettings && typeof rawTableSettings === "object") {
+    const value = rawTableSettings as Partial<MdToDocxTableSettings>;
+    normalizedTableSettings = {
+      tablePreset: parseTablePreset(value.tablePreset),
+      headerBold: Boolean(value.headerBold),
+      textStyle: normalizeStyleBlock(value.textStyle, base.tableSettings.textStyle, defaults),
+      applyTextStyle: typeof value.applyTextStyle === "boolean"
+        ? value.applyTextStyle
+        : true,
     };
-  };
+  } else {
+    normalizedTableSettings.textStyle = normalizeStyleBlock(
+      base.tableSettings.textStyle,
+      base.tableSettings.textStyle,
+      defaults,
+    );
+  }
 
   return {
     title: normalizedBlock("title"),
@@ -647,6 +927,7 @@ const normalizeStyleConfig = (raw: MdToDocxStyleConfig): MdToDocxStyleConfig => 
     figureCaption: normalizedBlock("figureCaption"),
     tableCaption: normalizedBlock("tableCaption"),
     body: normalizedBlock("body"),
+    tableSettings: normalizedTableSettings,
     advancedDefaults: defaults,
   };
 };
@@ -656,22 +937,22 @@ const readStyleBlock = (key: StyleSectionKey, label: string): MdToDocxStyleBlock
   const enFont = requireElement<HTMLSelectElement>(`#${styleInputId(key, "enFont")}`).value.trim();
   const fontSizePt = parsePositiveNumber(
     requireElement<HTMLInputElement>(`#${styleInputId(key, "fontSizePt")}`).value,
-    `${label} 字号`,
+    `${label}${tr(" 字号", " font size")}`,
   );
   const lineSpacingMode = requireElement<HTMLSelectElement>(
     `#${styleInputId(key, "lineSpacingMode")}`,
   ).value as LineSpacingMode;
   const lineSpacingValue = parsePositiveNumber(
     requireElement<HTMLInputElement>(`#${styleInputId(key, "lineSpacingValue")}`).value,
-    `${label} 行距值`,
+    `${label}${tr(" 行距值", " line spacing value")}`,
   );
   const align = requireElement<HTMLSelectElement>(`#${styleInputId(key, "align")}`).value as AlignMode;
 
   if (!zhFont) {
-    throw new Error(`${label} 中文字体不能为空`);
+    throw new Error(`${label}${tr(" 中文字体不能为空", " Chinese font cannot be empty")}`);
   }
   if (!enFont) {
-    throw new Error(`${label} 英文字体不能为空`);
+    throw new Error(`${label}${tr(" 英文字体不能为空", " English font cannot be empty")}`);
   }
 
   const beforeMode = parseSpacingMode(
@@ -679,14 +960,14 @@ const readStyleBlock = (key: StyleSectionKey, label: string): MdToDocxStyleBlock
   );
   const beforeValue = parseNonNegativeNumber(
     requireElement<HTMLInputElement>(`#${styleInputId(key, "beforeValue")}`).value,
-    `${label} 段前值`,
+    `${label}${tr(" 段前值", " before paragraph value")}`,
   );
   const afterMode = parseSpacingMode(
     requireElement<HTMLSelectElement>(`#${styleInputId(key, "afterMode")}`).value,
   );
   const afterValue = parseNonNegativeNumber(
     requireElement<HTMLInputElement>(`#${styleInputId(key, "afterValue")}`).value,
-    `${label} 段后值`,
+    `${label}${tr(" 段后值", " after paragraph value")}`,
   );
 
   const advancedOverride = {
@@ -700,7 +981,7 @@ const readStyleBlock = (key: StyleSectionKey, label: string): MdToDocxStyleBlock
     },
     firstLineIndentChars: parseNonNegativeNumber(
       requireElement<HTMLInputElement>(`#${styleInputId(key, "firstLineIndentChars")}`).value,
-      `${label} 首行缩进`,
+      `${label}${tr(" 首行缩进", " first line indent")}`,
     ),
     bold: requireElement<HTMLInputElement>(`#${styleInputId(key, "bold")}`).checked,
     italic: requireElement<HTMLInputElement>(`#${styleInputId(key, "italic")}`).checked,
@@ -717,14 +998,87 @@ const readStyleBlock = (key: StyleSectionKey, label: string): MdToDocxStyleBlock
   };
 };
 
+const readTableTextStyleFromForm = (): MdToDocxStyleBlock => {
+  const zhFont = requireElement<HTMLSelectElement>("#table-zhFont").value.trim();
+  const enFont = requireElement<HTMLSelectElement>("#table-enFont").value.trim();
+  const fontSizePt = parsePositiveNumber(
+    requireElement<HTMLInputElement>("#table-fontSizePt").value,
+    tr("表格 字号", "Table font size"),
+  );
+  const lineSpacingMode = requireElement<HTMLSelectElement>("#table-lineSpacingMode")
+    .value as LineSpacingMode;
+  const lineSpacingValue = parsePositiveNumber(
+    requireElement<HTMLInputElement>("#table-lineSpacingValue").value,
+    tr("表格 行距值", "Table line spacing value"),
+  );
+  const align = requireElement<HTMLSelectElement>("#table-align").value as AlignMode;
+
+  if (!zhFont) {
+    throw new Error(tr("表格 中文字体不能为空", "Table Chinese font cannot be empty"));
+  }
+  if (!enFont) {
+    throw new Error(tr("表格 英文字体不能为空", "Table English font cannot be empty"));
+  }
+
+  const beforeMode = parseSpacingMode(requireElement<HTMLSelectElement>("#table-beforeMode").value);
+  const beforeValue = parseNonNegativeNumber(
+    requireElement<HTMLInputElement>("#table-beforeValue").value,
+    tr("表格 段前值", "Table before paragraph value"),
+  );
+  const afterMode = parseSpacingMode(requireElement<HTMLSelectElement>("#table-afterMode").value);
+  const afterValue = parseNonNegativeNumber(
+    requireElement<HTMLInputElement>("#table-afterValue").value,
+    tr("表格 段后值", "Table after paragraph value"),
+  );
+
+  return {
+    zhFont,
+    enFont,
+    fontSizePt,
+    lineSpacingMode,
+    lineSpacingValue,
+    align,
+    advancedOverride: {
+      before: {
+        mode: beforeMode,
+        value: beforeValue,
+      },
+      after: {
+        mode: afterMode,
+        value: afterValue,
+      },
+      firstLineIndentChars: parseNonNegativeNumber(
+        requireElement<HTMLInputElement>("#table-firstLineIndentChars").value,
+        tr("表格 首行缩进", "Table first line indent"),
+      ),
+      bold: requireElement<HTMLInputElement>("#table-bold").checked,
+      italic: requireElement<HTMLInputElement>("#table-italic").checked,
+    },
+  };
+};
+
+const readTableSettingsFromForm = (): MdToDocxTableSettings => {
+  const tablePreset = parseTablePreset(
+    requireElement<HTMLSelectElement>("#table-tablePreset").value,
+  );
+  const headerBold = requireElement<HTMLInputElement>("#table-headerBold").checked;
+  return {
+    tablePreset,
+    headerBold,
+    textStyle: readTableTextStyleFromForm(),
+    applyTextStyle: tableApplyTextStyle,
+  };
+};
+
 const readStyleConfigFromForm = (): MdToDocxStyleConfig => {
   const values: Partial<MdToDocxStyleConfig> = {
     advancedDefaults: { ...DEFAULT_ADVANCED_SETTINGS },
   };
 
-  for (const item of STYLE_SECTIONS) {
-    values[item.key] = readStyleBlock(item.key, item.label);
+  for (const key of STYLE_SECTIONS) {
+    values[key] = readStyleBlock(key, getStyleSectionLabel(key));
   }
+  values.tableSettings = readTableSettingsFromForm();
   return values as MdToDocxStyleConfig;
 };
 
@@ -751,12 +1105,38 @@ const applyStyleBlock = (
   requireElement<HTMLInputElement>(`#${styleInputId(key, "italic")}`).checked = advanced.italic;
 };
 
+const applyTableSettingsToForm = (settings: MdToDocxTableSettings) => {
+  requireElement<HTMLSelectElement>("#table-tablePreset").value = settings.tablePreset;
+  requireElement<HTMLInputElement>("#table-headerBold").checked = settings.headerBold;
+
+  const block = settings.textStyle;
+  ensureSelectHasValue(requireElement<HTMLSelectElement>("#table-zhFont"), block.zhFont);
+  ensureSelectHasValue(requireElement<HTMLSelectElement>("#table-enFont"), block.enFont);
+  requireElement<HTMLInputElement>("#table-fontSizePt").value = String(block.fontSizePt);
+  requireElement<HTMLSelectElement>("#table-lineSpacingMode").value = block.lineSpacingMode;
+  requireElement<HTMLInputElement>("#table-lineSpacingValue").value = String(block.lineSpacingValue);
+  requireElement<HTMLSelectElement>("#table-align").value = block.align;
+
+  const advanced = block.advancedOverride ?? DEFAULT_ADVANCED_SETTINGS;
+  requireElement<HTMLSelectElement>("#table-beforeMode").value = advanced.before.mode;
+  requireElement<HTMLInputElement>("#table-beforeValue").value = String(advanced.before.value);
+  requireElement<HTMLSelectElement>("#table-afterMode").value = advanced.after.mode;
+  requireElement<HTMLInputElement>("#table-afterValue").value = String(advanced.after.value);
+  requireElement<HTMLInputElement>("#table-firstLineIndentChars").value = String(
+    advanced.firstLineIndentChars,
+  );
+  requireElement<HTMLInputElement>("#table-bold").checked = advanced.bold;
+  requireElement<HTMLInputElement>("#table-italic").checked = advanced.italic;
+  tableApplyTextStyle = settings.applyTextStyle;
+};
+
 const applyStyleConfigToForm = (config: MdToDocxStyleConfig) => {
   const normalized = normalizeStyleConfig(config);
 
-  for (const item of STYLE_SECTIONS) {
-    applyStyleBlock(item.key, normalized[item.key]);
+  for (const key of STYLE_SECTIONS) {
+    applyStyleBlock(key, normalized[key]);
   }
+  applyTableSettingsToForm(normalized.tableSettings);
 };
 
 pickInputButton.addEventListener("click", async () => {
@@ -767,7 +1147,7 @@ pickInputButton.addEventListener("click", async () => {
   if (typeof selected === "string") {
     inputPathEl.value = selected;
     outputPathEl.value = defaultOutputFromDocInput(selected);
-    setStatus("已选择输入文件", "success");
+    setStatus(tr("已选择输入文件", "Input file selected"), "success");
   }
 });
 
@@ -779,7 +1159,7 @@ pickOutputButton.addEventListener("click", async () => {
   });
   if (typeof selected === "string") {
     outputPathEl.value = selected;
-    setStatus("已设置输出路径", "success");
+    setStatus(tr("已设置输出路径", "Output path set"), "success");
   }
 });
 
@@ -793,13 +1173,16 @@ openDocOutputDirButton.addEventListener("click", async () => {
 extractImagesEl.addEventListener("change", () => {
   if (extractImagesEl.checked && inputPathEl.value) {
     const markdownPath = outputPathEl.value || defaultOutputFromDocInput(inputPathEl.value);
-    setStatus(`图片将导出到 ${defaultImageDirFromMarkdownOutput(markdownPath)}`, "info");
+    setStatus(
+      `${tr("图片将导出到 ", "Images will be exported to ")}${defaultImageDirFromMarkdownOutput(markdownPath)}`,
+      "info",
+    );
   }
 });
 
 runButton.addEventListener("click", async () => {
   if (!inputPathEl.value) {
-    setStatus("请先选择输入文件", "error");
+    setStatus(tr("请先选择输入文件", "Please select an input file first"), "error");
     return;
   }
 
@@ -816,7 +1199,7 @@ runButton.addEventListener("click", async () => {
   };
 
   runButton.disabled = true;
-  setStatus("转换中...", "info");
+  setStatus(tr("转换中...", "Converting..."), "info");
 
   try {
     const response = await invoke<ConversionResponse>("convert_docx", { request });
@@ -825,28 +1208,35 @@ runButton.addEventListener("click", async () => {
     if (response.outputPath) {
       outputPathEl.value = response.outputPath;
     }
-    outputViewEl.textContent = response.markdown || "无输出内容";
+    outputViewEl.textContent = response.markdown || tr("无输出内容", "No output content");
 
     if (response.success) {
-      const messages: string[] = ["导出成功", `文件：${response.outputPath || outputPathEl.value}`];
+      const messages: string[] = [
+        tr("导出成功", "Export succeeded"),
+        `${tr("文件：", "File: ")}${response.outputPath || outputPathEl.value}`,
+      ];
       if (response.outputPath && originalOutput && response.outputPath !== originalOutput) {
-        messages.push("检测到重名，已自动改名保存");
+        messages.push(tr("检测到重名，已自动改名保存", "Name conflict detected; auto-renamed and saved"));
       }
       if (extractImagesEl.checked) {
         const markdownPath = response.outputPath || outputPathEl.value;
-        messages.push(`图片目录：${defaultImageDirFromMarkdownOutput(markdownPath)}`);
+        messages.push(`${tr("图片目录：", "Images folder: ")}${defaultImageDirFromMarkdownOutput(markdownPath)}`);
       }
       if (splitSectionsEl.checked && response.splitOutputDir && response.splitFileCount) {
-        messages.push(`章节拆分：${response.splitFileCount} 个文件`);
+        messages.push(
+          currentLocale === "zh"
+            ? `章节拆分：${response.splitFileCount} 个文件`
+            : `Section split: ${response.splitFileCount} files`,
+        );
       }
       setStatus(messages.join(" | "), "success");
     } else {
-      const fallback = response.stderr || `转换失败（退出码 ${response.exitCode}）`;
+      const fallback = response.stderr || tr(`转换失败（退出码 ${response.exitCode}）`, `Conversion failed (exit code ${response.exitCode})`);
       setStatus(fallback, "error");
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    setStatus(`调用失败：${message}`, "error");
+    setStatus(`${tr("调用失败：", "Invocation failed: ")}${message}`, "error");
   } finally {
     runButton.disabled = false;
   }
@@ -860,7 +1250,7 @@ pickMdInputButton.addEventListener("click", async () => {
   if (typeof selected === "string") {
     mdInputPathEl.value = selected;
     docxOutputPathEl.value = defaultDocxOutputFromMd(selected);
-    setStatus("已选择 Markdown 文件", "success");
+    setStatus(tr("已选择 Markdown 文件", "Markdown file selected"), "success");
   }
 });
 
@@ -872,7 +1262,7 @@ pickDocxOutputButton.addEventListener("click", async () => {
   });
   if (typeof selected === "string") {
     docxOutputPathEl.value = selected;
-    setStatus("已设置 DOCX 输出路径", "success");
+    setStatus(tr("已设置 DOCX 输出路径", "DOCX output path set"), "success");
   }
 });
 
@@ -890,7 +1280,7 @@ toggleStylePanelButton.addEventListener("click", () => {
 
 resetStylePresetButton.addEventListener("click", () => {
   applyStyleConfigToForm(DEFAULT_STYLE_CONFIG);
-  setStatus("已恢复默认样式", "success");
+  setStatus(tr("已恢复默认样式", "Default style restored"), "success");
 });
 
 loadStylePresetButton.addEventListener("click", async () => {
@@ -907,10 +1297,10 @@ loadStylePresetButton.addEventListener("click", async () => {
       request: { path: selected },
     });
     applyStyleConfigToForm(config);
-    setStatus("已加载样式预设", "success");
+    setStatus(tr("已加载样式预设", "Style preset loaded"), "success");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    setStatus(`加载预设失败：${message}`, "error");
+    setStatus(`${tr("加载预设失败：", "Failed to load preset: ")}${message}`, "error");
   }
 });
 
@@ -936,16 +1326,16 @@ saveStylePresetButton.addEventListener("click", async () => {
         styleConfig: config,
       },
     });
-    setStatus("样式预设已保存", "success");
+    setStatus(tr("样式预设已保存", "Style preset saved"), "success");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    setStatus(`保存预设失败：${message}`, "error");
+    setStatus(`${tr("保存预设失败：", "Failed to save preset: ")}${message}`, "error");
   }
 });
 
 runMdToDocxButton.addEventListener("click", async () => {
   if (!mdInputPathEl.value) {
-    setStatus("请先选择 Markdown 输入文件", "error");
+    setStatus(tr("请先选择 Markdown 输入文件", "Please select a Markdown input file first"), "error");
     return;
   }
 
@@ -958,7 +1348,7 @@ runMdToDocxButton.addEventListener("click", async () => {
     styleConfig = readStyleConfigFromForm();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    setStatus(`样式配置无效：${message}`, "error");
+    setStatus(`${tr("样式配置无效：", "Invalid style configuration: ")}${message}`, "error");
     return;
   }
 
@@ -969,7 +1359,7 @@ runMdToDocxButton.addEventListener("click", async () => {
   };
 
   runMdToDocxButton.disabled = true;
-  setStatus("导出 DOCX 中...", "info");
+  setStatus(tr("导出 DOCX 中...", "Exporting DOCX..."), "info");
 
   try {
     const originalOutput = docxOutputPathEl.value;
@@ -978,7 +1368,7 @@ runMdToDocxButton.addEventListener("click", async () => {
       docxOutputPathEl.value = response.outputPath;
     }
 
-    const logs = [`输出文件：${response.outputPath}`];
+    const logs = [`${tr("输出文件：", "Output file: ")}${response.outputPath}`];
     if (response.stdout) {
       logs.push("\n[stdout]\n" + response.stdout);
     }
@@ -989,16 +1379,19 @@ runMdToDocxButton.addEventListener("click", async () => {
 
     if (response.success) {
       if (response.outputPath && originalOutput && response.outputPath !== originalOutput) {
-        setStatus("DOCX 导出成功（检测到重名，已自动改名保存）", "success");
+        setStatus(
+          tr("DOCX 导出成功（检测到重名，已自动改名保存）", "DOCX export succeeded (name conflict detected; auto-renamed and saved)"),
+          "success",
+        );
       } else {
-        setStatus("DOCX 导出成功", "success");
+        setStatus(tr("DOCX 导出成功", "DOCX export succeeded"), "success");
       }
     } else {
-      setStatus(response.stderr || `导出失败（退出码 ${response.exitCode}）`, "error");
+      setStatus(response.stderr || tr(`导出失败（退出码 ${response.exitCode}）`, `Export failed (exit code ${response.exitCode})`), "error");
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    setStatus(`调用失败：${message}`, "error");
+    setStatus(`${tr("调用失败：", "Invocation failed: ")}${message}`, "error");
   } finally {
     runMdToDocxButton.disabled = false;
   }
@@ -1012,5 +1405,16 @@ for (const radio of directionRadios) {
   });
 }
 
+langToggleButton.addEventListener("click", () => {
+  currentLocale = currentLocale === "zh" ? "en" : "zh";
+  applyLocaleToUI();
+  switchDirection(currentDirection);
+  setStatus(
+    currentLocale === "zh" ? "已切换到中文界面" : "Switched to English UI",
+    "success",
+  );
+});
+
 setStylePanelExpanded(false);
+applyLocaleToUI();
 switchDirection(currentDirection);

@@ -75,6 +75,19 @@ body {
   box-shadow: 0 12px 30px rgba(23, 60, 112, 0.08);
 }
 
+.hero-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lang-toggle {
+  min-width: 92px;
+  white-space: nowrap;
+}
+
 .hero-tag {
   display: inline-block;
   font-size: 12px;
@@ -282,27 +295,41 @@ input[type="checkbox"] {
 .preset-toolbar {
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .style-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: 8px;
   border: 1px solid #d2e2fb;
   background: #f7fbff;
   border-radius: 12px;
   padding: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .style-toolbar > .btn {
-  justify-self: start;
-  min-width: 142px;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .style-toolbar .preset-toolbar {
-  justify-self: end;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.style-toolbar .preset-toolbar .btn {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .style-panel {

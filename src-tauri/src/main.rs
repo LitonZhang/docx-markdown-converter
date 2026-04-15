@@ -49,6 +49,16 @@ struct StyleSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct TableSettings {
+    table_preset: String,
+    header_bold: bool,
+    text_style: StyleSpec,
+    #[serde(default = "default_true")]
+    apply_text_style: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AdvancedSettings {
     #[serde(default = "default_spacing_setting_pt")]
     before: SpacingSetting,
@@ -90,6 +100,10 @@ fn default_spacing_setting_pt() -> SpacingSetting {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_heading3_style() -> StyleSpec {
     StyleSpec {
         zh_font: "宋体".to_string(),
@@ -112,6 +126,37 @@ fn default_heading3_style() -> StyleSpec {
     }
 }
 
+fn default_table_text_style() -> StyleSpec {
+    StyleSpec {
+        zh_font: "宋体".to_string(),
+        en_font: "Times New Roman".to_string(),
+        font_size_pt: 12.0,
+        line_spacing_mode: "multiple".to_string(),
+        line_spacing_value: 1.0,
+        align: "center".to_string(),
+        advanced_override: Some(AdvancedSettings {
+            before: default_spacing_setting_pt(),
+            after: default_spacing_setting_pt(),
+            before_pt: None,
+            after_pt: None,
+            first_line_indent_chars: 0.0,
+            bold: false,
+            italic: false,
+        }),
+        bold: None,
+        italic: None,
+    }
+}
+
+fn default_table_settings_compat() -> TableSettings {
+    TableSettings {
+        table_preset: "tableGrid".to_string(),
+        header_bold: false,
+        text_style: default_table_text_style(),
+        apply_text_style: false,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MdToDocxStyleConfig {
@@ -125,6 +170,8 @@ struct MdToDocxStyleConfig {
     figure_caption: StyleSpec,
     table_caption: StyleSpec,
     body: StyleSpec,
+    #[serde(default = "default_table_settings_compat")]
+    table_settings: TableSettings,
     #[serde(default = "default_advanced_settings")]
     advanced_defaults: AdvancedSettings,
 }
@@ -198,6 +245,15 @@ fn migrate_style_spec_compat(spec: &mut StyleSpec) {
     }
 }
 
+fn migrate_table_settings_compat(settings: &mut TableSettings) {
+    migrate_style_spec_compat(&mut settings.text_style);
+    let normalized = match settings.table_preset.as_str() {
+        "threeLine" | "tableGrid" | "table" => settings.table_preset.clone(),
+        _ => "tableGrid".to_string(),
+    };
+    settings.table_preset = normalized;
+}
+
 fn migrate_style_config_compat(mut config: MdToDocxStyleConfig) -> MdToDocxStyleConfig {
     migrate_advanced_settings_compat(&mut config.advanced_defaults);
     migrate_style_spec_compat(&mut config.title);
@@ -209,6 +265,7 @@ fn migrate_style_config_compat(mut config: MdToDocxStyleConfig) -> MdToDocxStyle
     migrate_style_spec_compat(&mut config.figure_caption);
     migrate_style_spec_compat(&mut config.table_caption);
     migrate_style_spec_compat(&mut config.body);
+    migrate_table_settings_compat(&mut config.table_settings);
     config
 }
 
@@ -927,7 +984,7 @@ fn convert_md_to_docx(mut request: ConvertMdToDocxRequest) -> Result<ConvertMdTo
 fn save_style_preset(request: SaveStylePresetRequest) -> Result<(), String> {
     ensure_parent(&request.path)?;
     let payload = StylePresetFile {
-        version: 5,
+        version: 6,
         style_config: request.style_config,
     };
     let json = serde_json::to_string_pretty(&payload)

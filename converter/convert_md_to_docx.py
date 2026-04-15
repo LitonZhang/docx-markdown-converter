@@ -147,7 +147,16 @@ class StyleConfig:
     figure_caption: StyleSpec
     table_caption: StyleSpec
     body: StyleSpec
+    table_settings: "TableSettings"
     advanced_defaults: AdvancedSettings
+
+
+@dataclass
+class TableSettings:
+    table_preset: str
+    header_bold: bool
+    text_style: StyleSpec
+    apply_text_style: bool
 
 
 def w_tag(name: str) -> str:
@@ -347,6 +356,72 @@ def parse_style_spec(raw: dict[str, object], label: str, global_advanced: Advanc
     )
 
 
+def build_default_table_text_style() -> StyleSpec:
+    return StyleSpec(
+        zh_font="宋体",
+        en_font="Times New Roman",
+        font_size_pt=12.0,
+        line_spacing_mode="multiple",
+        line_spacing_value=1.0,
+        align="center",
+        before=SpacingSetting(mode="pt", value=0.0),
+        after=SpacingSetting(mode="pt", value=0.0),
+        first_line_indent_chars=0.0,
+        bold=False,
+        italic=False,
+    )
+
+
+def clone_style_spec(spec: StyleSpec) -> StyleSpec:
+    return StyleSpec(
+        zh_font=spec.zh_font,
+        en_font=spec.en_font,
+        font_size_pt=spec.font_size_pt,
+        line_spacing_mode=spec.line_spacing_mode,
+        line_spacing_value=spec.line_spacing_value,
+        align=spec.align,
+        before=SpacingSetting(mode=spec.before.mode, value=spec.before.value),
+        after=SpacingSetting(mode=spec.after.mode, value=spec.after.value),
+        first_line_indent_chars=spec.first_line_indent_chars,
+        bold=spec.bold,
+        italic=spec.italic,
+    )
+
+
+def parse_table_settings(
+    raw: object,
+    global_advanced: AdvancedSettings,
+    body_style: StyleSpec,
+) -> TableSettings:
+    if not isinstance(raw, dict):
+        return TableSettings(
+            table_preset="tableGrid",
+            header_bold=False,
+            text_style=clone_style_spec(body_style),
+            apply_text_style=False,
+        )
+
+    table_preset = str(raw.get("tablePreset", "threeLine")).strip()
+    if table_preset not in {"threeLine", "tableGrid", "table"}:
+        table_preset = "threeLine"
+
+    header_bold = bool(raw.get("headerBold", False))
+    apply_text_style = bool(raw.get("applyTextStyle", True))
+
+    text_style_raw = raw.get("textStyle")
+    if isinstance(text_style_raw, dict):
+        text_style = parse_style_spec(text_style_raw, "tableSettings.textStyle", global_advanced)
+    else:
+        text_style = build_default_table_text_style()
+
+    return TableSettings(
+        table_preset=table_preset,
+        header_bold=header_bold,
+        text_style=text_style,
+        apply_text_style=apply_text_style,
+    )
+
+
 def parse_style_config(raw: dict[str, object]) -> StyleConfig:
     style_map = {
         "title": "title",
@@ -378,7 +453,17 @@ def parse_style_config(raw: dict[str, object]) -> StyleConfig:
             raise ValueError(f"Missing style section: {json_key}")
         parsed[attr_name] = parse_style_spec(section_raw, json_key, global_advanced)
 
-    return StyleConfig(**parsed, advanced_defaults=global_advanced)
+    table_settings = parse_table_settings(
+        raw.get("tableSettings"),
+        global_advanced,
+        parsed["body"],
+    )
+
+    return StyleConfig(
+        **parsed,
+        table_settings=table_settings,
+        advanced_defaults=global_advanced,
+    )
 
 
 def load_style_config(style_json_path: Path) -> StyleConfig:
@@ -991,15 +1076,131 @@ def apply_body_layout(document_root: ET.Element, columns: str, body_start_index:
     return warnings
 
 
-def apply_table_grid_style(document_root: ET.Element) -> None:
+def set_border(
+    borders: ET.Element,
+    edge: str,
+    val: str,
+    size: int | None = None,
+    color: str = "auto",
+) -> None:
+    node = get_or_create(borders, w_tag(edge))
+    node.set(w_tag("val"), val)
+    if val == "nil":
+        node.attrib.pop(w_tag("sz"), None)
+        node.attrib.pop(w_tag("space"), None)
+        node.attrib.pop(w_tag("color"), None)
+        return
+    node.set(w_tag("sz"), str(size if size is not None else 4))
+    node.set(w_tag("space"), "0")
+    node.set(w_tag("color"), color)
+
+
+def apply_three_line_table_borders(table: ET.Element) -> None:
+    tbl_pr = get_or_create(table, w_tag("tblPr"))
+    tbl_style = get_or_create(tbl_pr, w_tag("tblStyle"))
+    tbl_style.set(w_tag("val"), "Table")
+
+    tbl_borders = get_or_create(tbl_pr, w_tag("tblBorders"))
+    set_border(tbl_borders, "top", "single", 12)
+    set_border(tbl_borders, "bottom", "single", 12)
+    set_border(tbl_borders, "left", "nil")
+    set_border(tbl_borders, "right", "nil")
+    set_border(tbl_borders, "insideH", "nil")
+    set_border(tbl_borders, "insideV", "nil")
+
+    rows = table.findall("./w:tr", NS)
+    for row_index, row in enumerate(rows):
+        for cell in row.findall("./w:tc", NS):
+            tc_pr = get_or_create(cell, w_tag("tcPr"))
+            existing = tc_pr.find(w_tag("tcBorders"))
+            if existing is not None:
+                tc_pr.remove(existing)
+            if row_index == 0:
+                tc_borders = ET.SubElement(tc_pr, w_tag("tcBorders"))
+                set_border(tc_borders, "top", "nil")
+                set_border(tc_borders, "left", "nil")
+                set_border(tc_borders, "right", "nil")
+                set_border(tc_borders, "bottom", "single", 8)
+
+
+def apply_table_text_style_to_paragraph(
+    paragraph: ET.Element,
+    spec: StyleSpec,
+    force_bold: bool | None = None,
+) -> None:
+    ppr = get_or_create(paragraph, w_tag("pPr"))
+    set_paragraph_spacing(
+        ppr,
+        spec.line_spacing_mode,
+        spec.line_spacing_value,
+        spec.before,
+        spec.after,
+    )
+    set_alignment(ppr, spec.align)
+    set_first_line_indent(ppr, spec.first_line_indent_chars)
+
+    for run in paragraph.findall(".//w:r", NS):
+        rpr = get_or_create(run, w_tag("rPr"))
+        set_fonts(rpr, spec.zh_font, spec.en_font)
+        set_font_size(rpr, spec.font_size_pt)
+        set_bool_node(rpr, w_tag("b"), spec.bold if force_bold is None else force_bold)
+        set_bool_node(rpr, w_tag("i"), spec.italic)
+
+
+def apply_table_header_bold_to_paragraph(paragraph: ET.Element) -> None:
+    for run in paragraph.findall(".//w:r", NS):
+        rpr = get_or_create(run, w_tag("rPr"))
+        set_bool_node(rpr, w_tag("b"), True)
+
+
+def apply_table_settings(document_root: ET.Element, settings: TableSettings) -> None:
+    style_id_map = {
+        "tableGrid": "TableGrid",
+        "table": "Table",
+    }
+
     for table in document_root.findall(".//w:body/w:tbl", NS):
-        tbl_pr = table.find(w_tag("tblPr"))
-        if tbl_pr is None:
-            tbl_pr = ET.SubElement(table, w_tag("tblPr"))
-        tbl_style = tbl_pr.find(w_tag("tblStyle"))
-        if tbl_style is None:
-            tbl_style = ET.SubElement(tbl_pr, w_tag("tblStyle"))
-        tbl_style.set(w_tag("val"), "TableGrid")
+        tbl_pr = get_or_create(table, w_tag("tblPr"))
+        tbl_style = get_or_create(tbl_pr, w_tag("tblStyle"))
+
+        if settings.table_preset == "threeLine":
+            apply_three_line_table_borders(table)
+        else:
+            tbl_style.set(w_tag("val"), style_id_map.get(settings.table_preset, "TableGrid"))
+            tbl_borders = tbl_pr.find(w_tag("tblBorders"))
+            if tbl_borders is not None:
+                tbl_pr.remove(tbl_borders)
+            for cell in table.findall(".//w:tc", NS):
+                tc_pr = get_or_create(cell, w_tag("tcPr"))
+                tc_borders = tc_pr.find(w_tag("tcBorders"))
+                if tc_borders is not None:
+                    tc_pr.remove(tc_borders)
+
+        rows = table.findall("./w:tr", NS)
+        for row_index, row in enumerate(rows):
+            is_header_row = row_index == 0
+            for paragraph in row.findall(".//w:tc/w:p", NS):
+                if settings.apply_text_style:
+                    force_bold = True if (settings.header_bold and is_header_row) else None
+                    apply_table_text_style_to_paragraph(
+                        paragraph,
+                        settings.text_style,
+                        force_bold=force_bold,
+                    )
+                elif settings.header_bold and is_header_row:
+                    apply_table_header_bold_to_paragraph(paragraph)
+
+
+def apply_table_grid_style(document_root: ET.Element) -> None:
+    apply_table_settings(
+        document_root,
+        TableSettings(
+            table_preset="tableGrid",
+            header_bold=False,
+            text_style=build_default_table_text_style(),
+            apply_text_style=False,
+        ),
+    )
 
 
 def load_roundtrip_metadata(roundtrip_meta_path: Path | None) -> dict[str, object] | None:
@@ -1309,7 +1510,7 @@ def rewrite_docx_with_styles(
         document_root = ET.fromstring(document_xml)
 
         apply_style_config_to_styles_xml(styles_root, config)
-        apply_table_grid_style(document_root)
+        apply_table_settings(document_root, config.table_settings)
         if apply_semantics:
             apply_semantic_styles(document_root)
 
