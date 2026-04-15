@@ -30,8 +30,8 @@ A local-first converter that supports both `.doc/.docx -> .md` and `.md -> .docx
 
 Prebuilt installers are included in this repository under `release-packages/`:
 
-- `release-packages/DOCX Markdown Converter_0.1.0_x64-setup.exe` (recommended for most users)
-- `release-packages/DOCX Markdown Converter_0.1.0_x64_en-US.msi` (better for enterprise/IT deployment)
+- `release-packages/DOCX Markdown Converter_0.1.1_x64-setup.exe` (recommended for most users)
+- `release-packages/DOCX Markdown Converter_0.1.1_x64_en-US.msi` (better for enterprise/IT deployment)
 
 Direct links:
 

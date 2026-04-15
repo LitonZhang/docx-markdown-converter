@@ -1,6 +1,6 @@
 [package]
 name = "docx-md-converter"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local DOCX to Markdown desktop app"
 authors = ["Codex"]
 edition = "2021"
